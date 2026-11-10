@@ -31,8 +31,10 @@ jobs:
       - run: pr-agent-cli-handlers action
         env:
           PR_AGENT_CLI_HANDLER: claude_code
-          PR_AGENT_CLI_TIMEOUT: "300"
-          CONFIG__MODEL: claude-sonnet-5
+          PR_AGENT_CLI_TIMEOUT: "600"
+          CONFIG__MODEL: claude-opus-5-5
+          CONFIG__REASONING_EFFORT: low
+          CONFIG__MAX_MODEL_TOKENS: "200000"
           CONFIG__FALLBACK_MODELS: '["claude-opus-5"]'
           GITHUB_ACTION_CONFIG__HANDLE_PUSH_TRIGGER: "true"
           GITHUB_ACTION_CONFIG__PUSH_TRIGGER_IGNORE_BOT_COMMITS: "false"
