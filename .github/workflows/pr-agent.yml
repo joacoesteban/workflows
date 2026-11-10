@@ -37,5 +37,6 @@ jobs:
           GITHUB_ACTION_CONFIG__HANDLE_PUSH_TRIGGER: "true"
           GITHUB_ACTION_CONFIG__PUSH_TRIGGER_IGNORE_BOT_COMMITS: "false"
           GITHUB_ACTION_CONFIG__PUSH_COMMANDS: '["/describe", "/review", "/improve"]'
+          PR_REVIEWER__INLINE_KEY_ISSUES: "true"
           GITHUB_TOKEN: ${{ github.token }}
           CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
