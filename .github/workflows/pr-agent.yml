@@ -33,7 +33,7 @@ jobs:
           PR_AGENT_CLI_HANDLER: claude_code
           PR_AGENT_CLI_TIMEOUT: "600"
           CONFIG__MODEL: claude-opus-5-5
-          CONFIG__REASONING_EFFORT: low
+          CONFIG__REASONING_EFFORT: high
           CONFIG__MAX_MODEL_TOKENS: "200000"
           CONFIG__FALLBACK_MODELS: '["claude-opus-5"]'
           GITHUB_ACTION_CONFIG__HANDLE_PUSH_TRIGGER: "true"
