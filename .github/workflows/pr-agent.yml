@@ -17,19 +17,54 @@ jobs:
         && github.event.issue.pull_request
         && startsWith(github.event.comment.body, '/')
         && github.event.comment.author_association == 'OWNER')
+      || (github.event_name == 'pull_request_review_comment'
+        && github.event.pull_request.head.repo.full_name == github.repository
+        && startsWith(github.event.comment.body, '/ask')
+        && (github.event.comment.author_association == 'OWNER' || github.event.sender.login == 'joacoesteban-agent-sandbox[bot]'))
+    # A newer push or /review cancels a running review of the same PR, so a stale review cannot publish state or resolve threads last.
+    concurrency:
+      group: pr-agent-${{ github.repository }}-${{ (github.event_name == 'pull_request' || (github.event_name == 'issue_comment' && startsWith(github.event.comment.body, '/review'))) && (github.event.pull_request.number || github.event.issue.number) || github.run_id }}
+      cancel-in-progress: true
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: .pr-agent-workflows
+          sparse-checkout: pr-agent
+          persist-credentials: false
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
       - uses: actions/setup-node@v4
         with:
           node-version: "24"
-      # Installed from a commit because 0.1.0 is not on PyPI yet. PR-Agent is pinned because the handlers patch its internals.
-      - run: pip install "git+https://github.com/akalongman/pr-agent-cli-handlers@0b10c1b658bd4aba8fb93a6d439499c48f06dfcb" "pr-agent[github,gitlab]==0.49.0"
+      # Installed from a commit because 0.1.0 is not on PyPI yet. PR-Agent is pinned because the handlers and pr-agent.patch patch its internals.
+      - run: pip install "git+https://github.com/akalongman/pr-agent-cli-handlers@0b10c1b658bd4aba8fb93a6d439499c48f06dfcb" "pr-agent[github,gitlab]==0.50.0"
+      - run: patch -p1 --forward --fuzz=0 -d "$(python -c 'import pathlib, pr_agent; print(pathlib.Path(pr_agent.__file__).parent.parent)')" < .pr-agent-workflows/pr-agent/pr-agent.patch
       - run: npm install -g @anthropic-ai/claude-code@2.1.302
-      - run: pr-agent-cli-handlers action
+      # PR-Agent drops every comment whose sender is a bot, so the sandbox bot's /ask replies reach it as a user's.
+      # /ask resolves only PR-Agent finding threads, so a reply cannot close a person's review thread.
+      - run: |
+          event="$GITHUB_EVENT_PATH"
+          if [ "$GITHUB_EVENT_NAME" = pull_request_review_comment ]; then
+            event="$RUNNER_TEMP/event.json"
+            jq '.sender.type = "User"' "$GITHUB_EVENT_PATH" > "$event"
+            # PR-Agent reads a question that starts with "-" as a setting, such as --comment_id or --pr_questions.resolve_threads,
+            # and sends any other spelling of /ask, which the case-insensitive job condition admits, to its generic command parser.
+            if ! jq -e '.comment.body | test("^\\s*/ask(\\s|$)") and (sub("^\\s*/ask\\s*"; "") | startswith("-") | not)' "$event" > /dev/null; then
+              echo "Skipping: not an /ask question" && exit 0
+            fi
+            root=$(jq -r '.comment.in_reply_to_id // empty' "$event")
+            if [ -n "$root" ] && [ "$(gh api "repos/$GITHUB_REPOSITORY/pulls/comments/$root" \
+                --jq '.user.login == "github-actions[bot]" and (.body | contains("pr-agent-key-issue-location"))')" = true ]; then
+              export PR_QUESTIONS__RESOLVE_THREADS=true
+            fi
+          fi
+          GITHUB_EVENT_PATH="$event" pr-agent-cli-handlers action
         env:
+          GH_TOKEN: ${{ github.token }}
           PR_AGENT_CLI_HANDLER: claude_code
           PR_AGENT_CLI_TIMEOUT: "600"
           CONFIG__MODEL: claude-opus-5-5
@@ -40,5 +75,9 @@ jobs:
           GITHUB_ACTION_CONFIG__PUSH_TRIGGER_IGNORE_BOT_COMMITS: "false"
           GITHUB_ACTION_CONFIG__PUSH_COMMANDS: '["/describe", "/review", "/improve"]'
           PR_REVIEWER__INLINE_KEY_ISSUES: "true"
+          # pr-agent.patch hides the limit from the prompt; PR-Agent only marks findings fixed while a review reports fewer than this.
+          PR_REVIEWER__NUM_MAX_FINDINGS: "100"
+          PR_QUESTIONS__RESOLVE_THREADS: "false"
           GITHUB_TOKEN: ${{ github.token }}
           CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+
