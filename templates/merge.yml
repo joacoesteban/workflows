@@ -1,0 +1,22 @@
+name: Merge
+
+# pull_request_target runs this file from the base branch, so a pull request
+# cannot rewrite it to read MERGE_APP_KEY.
+on:
+  pull_request_target:
+    types: [labeled]
+
+jobs:
+  merge:
+    permissions:
+      actions: read
+      checks: read
+      contents: read
+      pull-requests: write
+      statuses: read
+    uses: joacoesteban/workflows/.github/workflows/merge.yml@main
+    with:
+      method: ${{ vars.MERGE_METHOD }}
+      client-id: ${{ vars.MERGE_APP_CLIENT_ID }}
+    secrets:
+      MERGE_APP_KEY: ${{ secrets.MERGE_APP_KEY }}
