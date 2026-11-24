@@ -1,0 +1,18 @@
+name: Merge
+
+# pull_request_target runs this file from the base branch, never the pull request's copy, which an agent could rewrite.
+on:
+  pull_request_target:
+    types: [labeled]
+
+jobs:
+  merge:
+    permissions:
+      actions: write
+      checks: read
+      contents: write
+      pull-requests: write
+      statuses: read
+    uses: joacoesteban/workflows/.github/workflows/merge.yml@main
+    with:
+      method: ${{ vars.MERGE_METHOD }}
