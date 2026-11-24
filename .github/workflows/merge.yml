@@ -1,0 +1,92 @@
+name: Merge
+
+on:
+  workflow_call:
+    inputs:
+      method:
+        description: merge, squash, or rebase
+        type: string
+        required: true
+
+jobs:
+  merge:
+    if: github.event_name == 'pull_request_target' && github.event.label.name == 'merge'
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      PR: ${{ github.event.pull_request.number }}
+      BASE: ${{ github.base_ref }}
+      HEAD: ${{ github.event.pull_request.head.sha }}
+      DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+      METHOD: ${{ inputs.method }}
+    steps:
+      - name: Known merge method
+        run: |
+          case "$METHOD" in
+            merge | squash | rebase) ;;
+            *)
+              echo "MERGE_METHOD must be merge, squash, or rebase, not '$METHOD'" >&2
+              exit 1
+              ;;
+          esac
+      - name: Targets the default branch
+        run: |
+          if [ "$BASE" != "$DEFAULT_BRANCH" ]; then
+            echo "Merge into $DEFAULT_BRANCH only: this pull request targets $BASE" >&2
+            exit 1
+          fi
+      - name: Rebased onto the base branch
+        run: >
+          gh api "repos/$GH_REPO/compare/$BASE...$HEAD" --jq '
+            if .behind_by > 0 then error("Rebase onto \(env.BASE): \(.behind_by) commits behind")
+            elif any(.commits[]; .parents | length > 1) then error("Rebase onto \(env.BASE) without merge commits")
+            else empty end'
+      - name: Review threads resolved
+        run: |
+          # The $ names in the query are GraphQL variables, not shell ones.
+          # shellcheck disable=SC2016
+          unresolved=$(gh api graphql --paginate \
+            -f owner="${GH_REPO%/*}" -f name="${GH_REPO#*/}" -F number="$PR" \
+            -f query='
+              query($owner: String!, $name: String!, $number: Int!, $endCursor: String) {
+                repository(owner: $owner, name: $name) {
+                  pullRequest(number: $number) {
+                    reviewThreads(first: 100, after: $endCursor) {
+                      nodes { id isResolved comments(first: 1) { nodes { url } } }
+                      pageInfo { hasNextPage endCursor }
+                    }
+                  }
+                }
+              }' \
+            --jq '.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved | not) | .comments.nodes[0].url // .id')
+          if [ -n "$unresolved" ]; then
+            printf 'Resolve these review threads first:\n%s\n' "$unresolved" >&2
+            exit 1
+          fi
+      # In a called workflow GITHUB_WORKFLOW names the caller, which is the workflow the rollup lists.
+      - name: Checks passed
+        run: >
+          gh pr view "$PR" --json statusCheckRollup --jq '
+            [.statusCheckRollup[]
+              | select(.workflowName != env.GITHUB_WORKFLOW)
+              | select(.conclusion // .state | IN("SUCCESS", "NEUTRAL", "SKIPPED") | not)
+              | .name // .context]
+            | if length > 0 then error("Checks not passed: \(join(", "))") else empty end'
+      - run: gh pr merge "$PR" "--$METHOD" --match-head-commit "$HEAD"
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          sparse-checkout: .github/workflows
+      # Pushes made with GITHUB_TOKEN start no workflows, but workflow_dispatch
+      # events do, so run the push workflows of the default branch by hand.
+      - name: Run push workflows
+        run: |
+          for workflow in .github/workflows/*.yml .github/workflows/*.yaml; do
+            [ -f "$workflow" ] || continue
+            if yq -e '(.on | has("push")) and (.on | has("workflow_dispatch")) and ((.on.push.branches // [strenv(DEFAULT_BRANCH)]) | contains([strenv(DEFAULT_BRANCH)]))' "$workflow" >/dev/null 2>&1; then
+              gh workflow run "$(basename "$workflow")" --ref "$DEFAULT_BRANCH"
+            fi
+          done
+      - if: failure()
+        run: gh pr edit "$PR" --remove-label merge
