@@ -11,7 +11,7 @@ jobs:
     if: >-
       (github.event_name == 'pull_request'
         && github.event.pull_request.head.repo.full_name == github.repository
-        && (github.event.sender.type != 'Bot' || github.event.sender.login == 'joacoesteban-agent-sandbox[bot]'))
+        && github.event.sender.type != 'Bot')
       || (github.event_name == 'issue_comment'
         && github.event.sender.type != 'Bot'
         && github.event.issue.pull_request
@@ -20,7 +20,7 @@ jobs:
       || (github.event_name == 'pull_request_review_comment'
         && github.event.pull_request.head.repo.full_name == github.repository
         && startsWith(github.event.comment.body, '/ask')
-        && (github.event.comment.author_association == 'OWNER' || github.event.sender.login == 'joacoesteban' || github.event.sender.login == 'wall-e-cho' || github.event.sender.login == 'joacoesteban-agent-sandbox[bot]'))
+        && (github.event.comment.author_association == 'OWNER' || github.event.sender.login == 'joacoesteban' || github.event.sender.login == 'wall-e-cho'))
     # A newer push or /review cancels a running review of the same PR, so a stale review cannot publish state or resolve threads last.
     concurrency:
       group: pr-agent-${{ github.repository }}-${{ (github.event_name == 'pull_request' || (github.event_name == 'issue_comment' && startsWith(github.event.comment.body, '/review'))) && (github.event.pull_request.number || github.event.issue.number) || github.run_id }}
@@ -44,25 +44,21 @@ jobs:
       - run: pip install "git+https://github.com/akalongman/pr-agent-cli-handlers@0b10c1b658bd4aba8fb93a6d439499c48f06dfcb" "pr-agent[github,gitlab]==0.50.0"
       - run: patch -p1 --forward --fuzz=0 -d "$(python -c 'import pathlib, pr_agent; print(pathlib.Path(pr_agent.__file__).parent.parent)')" < .pr-agent-workflows/pr-agent/pr-agent.patch
       - run: npm install -g @anthropic-ai/claude-code@2.1.302
-      # PR-Agent drops every comment whose sender is a bot, so the sandbox bot's /ask replies reach it as a user's.
       # /ask resolves only PR-Agent finding threads, so a reply cannot close a person's review thread.
       - run: |
-          event="$GITHUB_EVENT_PATH"
           if [ "$GITHUB_EVENT_NAME" = pull_request_review_comment ]; then
-            event="$RUNNER_TEMP/event.json"
-            jq '.sender.type = "User"' "$GITHUB_EVENT_PATH" > "$event"
             # PR-Agent reads a question that starts with "-" as a setting, such as --comment_id or --pr_questions.resolve_threads,
             # and sends any other spelling of /ask, which the case-insensitive job condition admits, to its generic command parser.
-            if ! jq -e '.comment.body | test("^\\s*/ask(\\s|$)") and (sub("^\\s*/ask\\s*"; "") | startswith("-") | not)' "$event" > /dev/null; then
+            if ! jq -e '.comment.body | test("^\\s*/ask(\\s|$)") and (sub("^\\s*/ask\\s*"; "") | startswith("-") | not)' "$GITHUB_EVENT_PATH" > /dev/null; then
               echo "Skipping: not an /ask question" && exit 0
             fi
-            root=$(jq -r '.comment.in_reply_to_id // empty' "$event")
+            root=$(jq -r '.comment.in_reply_to_id // empty' "$GITHUB_EVENT_PATH")
             if [ -n "$root" ] && [ "$(gh api "repos/$GITHUB_REPOSITORY/pulls/comments/$root" \
                 --jq '.user.login == "github-actions[bot]" and (.body | contains("pr-agent-key-issue-location"))')" = true ]; then
               export PR_QUESTIONS__RESOLVE_THREADS=true
             fi
           fi
-          GITHUB_EVENT_PATH="$event" pr-agent-cli-handlers action
+          pr-agent-cli-handlers action
         env:
           GH_TOKEN: ${{ github.token }}
           PR_AGENT_CLI_HANDLER: claude_code
