@@ -11,14 +11,19 @@ on:
         description: The client ID of the GitHub App that merges.
         type: string
         required: true
+      environment:
+        description: Optional GitHub Actions environment that holds MERGE_APP_KEY.
+        type: string
+        default: ''
     secrets:
       MERGE_APP_KEY:
-        required: true
+        required: false
 
 jobs:
   merge:
     if: github.event_name == 'pull_request_target' && github.event.label.name == 'merge'
     runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
     env:
       GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
